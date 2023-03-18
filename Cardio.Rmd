@@ -1,0 +1,467 @@
+---
+title: "Cardiovascular Disease Prediction"
+author: "Biljana Novkovic"
+date: "3/19/2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## INTRODUCTION
+
+The term cardiovascular disease (CVD) refers to a range of diseases which affect the heart and blood vessels. They include heart attack (coronary heart disease), high blood pressure (hypertension), heart failure, and other heart diseases (Lopez et al. 2022). 
+
+CVD is the leading  cause of death globally, and causes 1 of 4 deaths in the United States. CVD is also the most costly disease in the world with a calculated indirect cost of $237 billion dollars per year and a projected increase to $368 billion by 2035 (Lopez et al. 2022; Rana et al. 2021).
+
+For decades, a lot of research and effort has been invested in trying to predict people's risk of heart disease. The most famous algorithm, called the Framingham Risk Score, has been developed based on the data obtained from the Framingham Heart Study, to estimate the 10-year risk of developing coronary heart disease (Wilson et al. 1998). 
+
+The Framingham Heart Study has been dubbed the most influential investigation in the history of modern medicine. It began in 1948 with around 5000 adults from Framingham, Massachusetts, and is now on its third generation of participants. A lot of what we know about heart disease is derived from this study, including many of the risk factors for heart disease (Hajar 2016).
+
+The first Framingham Risk Score included age, sex, bad cholesterol (LDL cholesterol), good cholesterol (HDL cholesterol), blood pressure, blood pressure treatment, diabetes, and smoking. Other factors we know increase the risk of heart disease include unhealthy diets, physical inactivity, obesity, stress and family history/genetics (Lopez et al. 2022; Wilson et al. 1998). 
+
+Algorithms that help predict heart disease are important for heart disease prevention. They help both individuals and their doctors decide on lifestyle modification and preventive medical treatment. In this project we will analyze a large dataset to try and predict the development of cardiovascular disease.
+
+## ANALYSES
+
+## The CVD Dataset
+
+The Cardiovascular disease dataset was obtained from kaggle (https://www.kaggle.com/datasets/sulianova/cardiovascular-disease-dataset/code). It was chosen because of its size. Larger studies, in theory, provide stronger and more reliable results. They have smaller margins of error and lower standards of deviation. They also allow the researchers to decrease the risk of false-negative or false-positive findings, which is especially important in medicine. 
+
+The cardiovascular disease dataset contains 70,000 individuals, and 12 variables, one of which is the outcome of having/not having cardiovascular disease.
+
+```{r setup2, include=FALSE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("ggplot2", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("readr", repos = "http://cran.us.r-project.org")
+if(!require(gridExtra)) install.packages("gridExtra", repos = "http://cran.us.r-project.org")
+if(!require(BSDA)) install.packages("BSDA", repos = "http://cran.us.r-project.org")
+if(!require(randomForest)) install.packages("randomForest", repos = "http://cran.us.r-project.org")
+
+library(tidyverse)
+library(caret)
+library(ggplot2)
+library(dbplyr)
+library(readr)
+library(gridExtra)
+library(BSDA)
+library(randomForest)
+
+dl <- "cardio_train.csv"
+download.file("https://raw.githubusercontent.com/nyrvelli/CVD/main/cardio_train.csv", dl)
+cardio <- read_csv("cardio_train.csv")
+
+# https://www.kaggle.com/datasets/sulianova/cardiovascular-disease-dataset/code
+
+```
+
+
+```{r explore, echo=FALSE}
+#exploring the dataset
+head(cardio) %>% knitr::kable()
+nrow(cardio) %>% knitr::kable()
+```
+
+First, we will transform the variable "age" from days into years, for clarity. Second, upon inspection, our dataset includes some weird values that are implausible, such as negative blood pressure values. We will remove rows containing implausible values for variables height, weight, and systolic and diastolic blood pressure.
+
+```{r clean, include=FALSE}
+#convert age from days to years
+cardio$age<- round(cardio$age/365.25, digits=2) 
+summary(cardio$age)
+
+#remove weird values
+summary(cardio$height) 
+hist(cardio$height)
+cardio<- cardio %>% filter(height >=140 & height <= 210)
+
+#remove weird values
+summary(cardio$weight) 
+hist(cardio$weight)
+cardio<- cardio %>% filter(weight >=40)
+
+# remove weird values, incompatible with life
+summary(cardio$ap_hi)  
+hist(cardio$ap_hi)
+cardio<- cardio %>% filter(ap_hi >=50 & ap_hi <= 240)
+
+# remove weird values, incompatible with life
+summary(cardio$ap_lo) 
+hist(cardio$ap_lo)
+cardio<- cardio %>% filter(ap_lo >=40 & ap_lo <= 140)
+
+```
+
+
+```{r nrowclean, echo = FALSE}
+nrow(cardio) %>% knitr::kable()
+#we have 68555 rows left
+```
+
+Once the dataset has been cleaned, we are left with 68555 rows.
+
+\newpage
+
+## Exploring the Dataset 
+
+First, let's look at our numerical variables: age, height, weight, systolic and diastolic blood pressure.
+
+```{r numerical, echo = FALSE}
+
+#create an exploration copy of the dataset
+cardio_plot <- cardio
+
+#cvd_map={0:'no',1:'yes'}, convert ro factors
+cardio_plot$cardio <- factor(cardio_plot$cardio,
+                    	levels=c(0,1),
+                    	labels=c("no CVD","CVD"))
+
+#arrange the order of factors
+cardio_plot$cardio <- factor(cardio_plot$cardio, levels = c("no CVD", "CVD")) 
+
+# make boxplot of age vs CVD state
+age_box <- cardio_plot %>% ggplot(aes(cardio, age, fill = cardio)) + geom_boxplot() +
+  scale_fill_manual(values = c("#00BFC4", "#F8766D")) +
+  labs(y = "Age")+
+  theme(axis.title.x = element_blank()) +
+  theme(legend.position="none")
+
+# test for significant differences in age between CVD states, using z-score
+nonCVD <- cardio_plot %>% filter(cardio == "no CVD")
+CVD <- cardio_plot %>% filter(cardio == "CVD")
+sd_nonCVD_age <- sd(nonCVD$age)
+sd_CVD_age <- sd(CVD$age)
+nonCVD_age <- nonCVD %>% select(age)
+CVD_age <- CVD %>% select(age)
+ztest_age<- z.test(x= nonCVD_age, y= CVD_age, sigma.x= sd_nonCVD_age, sigma.y= sd_CVD_age)
+ztest_results <- tibble(variable = "Age", p = ztest_age$p.value)
+
+# make boxplot of height vs CVD state
+height_box <- cardio_plot %>% ggplot(aes(cardio, height, fill = cardio)) + geom_boxplot() +
+  scale_fill_manual(values = c("#00BFC4", "#F8766D")) +
+  labs(y = "Height")+
+  theme(axis.title.x = element_blank())+
+  theme(legend.position="none")
+
+# test for significant differences in height between CVD states, using z-score
+sd_nonCVD_height <- sd(nonCVD$height)
+sd_CVD_height <- sd(CVD$height)
+nonCVD_height <- nonCVD %>% select(height)
+CVD_height <- CVD %>% select(height)
+ztest_height<- z.test(x= nonCVD_height, y= CVD_height, sigma.x= sd_nonCVD_height, sigma.y= sd_CVD_height)
+ztest_results <- bind_rows(ztest_results,
+                      	tibble(variable = "Height", p = ztest_height$p.value))
+
+# make boxplot of weight vs CVD state
+weight_box <- cardio_plot %>% ggplot(aes(cardio, weight, fill = cardio)) + geom_boxplot() +
+  scale_fill_manual(values = c("#00BFC4", "#F8766D")) +
+  labs(y = "Weight")+
+  theme(axis.title.x = element_blank())+
+  theme(legend.position="none")
+
+# test for significant differences in weight between CVD states, using z-score
+sd_nonCVD_weight <- sd(nonCVD$weight)
+sd_CVD_weight <- sd(CVD$weight)
+nonCVD_weight <- nonCVD %>% select(weight)
+CVD_weight <- CVD %>% select(weight)
+ztest_weight<- z.test(x= nonCVD_weight, y= CVD_weight, sigma.x= sd_nonCVD_weight, sigma.y= sd_CVD_weight)
+ztest_results <- bind_rows(ztest_results,
+                       	tibble(variable = "Weight", p = ztest_weight$p.value))
+ 
+# make boxplot of systolic blood pressure vs CVD state
+syst_box <- cardio_plot %>% ggplot(aes(cardio, ap_hi, fill = cardio)) + geom_boxplot() +
+  scale_fill_manual(values = c("#00BFC4", "#F8766D")) +
+  labs(y = "Blood Pressure (Systolic)")+
+  theme(axis.title.x = element_blank())+
+  theme(legend.position="none")
+
+# test for significant differences in systolic blood pressure between CVD states, using z-score
+sd_nonCVD_sys <- sd(nonCVD$ap_hi)
+sd_CVD_sys <- sd(CVD$ap_hi)
+nonCVD_sys <- nonCVD %>% select(ap_hi)
+CVD_sys <- CVD %>% select(ap_hi)
+ztest_sys<- z.test(x= nonCVD_sys, y= CVD_sys, sigma.x= sd_nonCVD_sys, sigma.y= sd_CVD_sys)
+ztest_results <- bind_rows(ztest_results,
+                       	tibble(variable = "Systolic Blood Pressure", p = ztest_sys$p.value))
+
+# make boxplot of diastolic blood pressure vs CVD state
+diast_box<- cardio_plot %>% ggplot(aes(cardio, ap_lo, fill = cardio)) + geom_boxplot() +
+  scale_fill_manual(values = c("#00BFC4", "#F8766D")) +
+  labs(y = "Blood Pressure (Diastolic)")+
+  theme(axis.title.x = element_blank())+
+  theme(legend.position="none")
+
+# test for significant differences in diastolic blood pressure between CVD states, using z-score
+sd_nonCVD_dia <- sd(nonCVD$ap_lo)
+sd_CVD_dia <- sd(CVD$ap_lo)
+nonCVD_dia <- nonCVD %>% select(ap_lo)
+CVD_dia <- CVD %>% select(ap_lo)
+ztest_dia<- z.test(x= nonCVD_dia, y= CVD_dia, sigma.x= sd_nonCVD_dia, sigma.y= sd_CVD_dia)
+ztest_results <- bind_rows(ztest_results,
+                       	tibble(variable = "Diastolic Blood Pressure", p = ztest_dia$p.value))
+
+#create plot
+grid.arrange(age_box, height_box, weight_box, syst_box, diast_box,nrow = 2)
+
+
+```
+
+Boxplots suggest that people with CVD tend to be older, weigh more, and have higher systolic and diastolic blood pressure. A z-test confirms that all the variables are significantly different between non-CVD and CVD individuals.
+
+```{r zscores, echo =FALSE}
+#print z-test results
+ztest_results %>% knitr::kable()
+```
+
+Next let's explore our categorical variables. For the purpose of exploration, let's turn the categorical variables into factors that we are familiar with: gender -> male, female; cholesterol -> normal, high, very high; glucose -> normal, high, very high; smoking -> non-smoker, smoker; alcohol -> non-drinker, drinker; and activity -> active, inactive.
+
+\newpage
+
+
+```{r transform, echo = FALSE}
+# gender_map={1:'female',2:'male'}; convert gender to factors
+cardio_plot$gender <- factor(cardio_plot$gender,
+                    	levels=c(1,2),
+                    	labels=c("female","male"))
+
+# cholesterol_map = {1: 'normal', 2: 'above normal', 3: 'well above normal'}, convert ro factors
+cardio_plot$cholesterol <- factor(cardio_plot$cholesterol,
+                        	levels=c(1,2,3),
+                        	labels=c("normal","high", "very high"))
+
+# glucose_map={1: 'normal', 2: 'above average', 3: 'well above normal'}, convert ro factors
+cardio_plot$gluc <- factor(cardio_plot$gluc,
+                  	levels=c(1,2,3),
+                  	labels=c("normal","high", "very high"))
+
+# df.smoke.unique() ['no', 'yes'] 0 = no, 1= yes, convert ro factors
+cardio_plot$smoke <- factor(cardio_plot$smoke,
+                  	levels=c(0,1),
+                  	labels=c("non-smoker","smoker"))
+
+
+#df.alco.unique() ['no', 'yes'], convert ro factors
+cardio_plot$alco <- factor(cardio_plot$alco,
+                  	levels=c(0,1),
+                  	labels=c("non-drinker","drinker"))
+
+
+#active_map={0:'no',1:'yes'}, convert ro factors
+cardio_plot$active <- factor(cardio_plot$active,
+                   	levels=c(0,1),
+                   	labels=c("inactive","active"))
+
+```
+
+```{r nrowtransd, echo = FALSE}
+#view exploration dataset
+cardio_plot %>% select(-id, -age, -height, -weight, -ap_hi, -ap_lo) %>% head() %>% knitr::kable()
+
+```
+
+Now, let's generate some plots.
+
+```{r categorical, echo = FALSE}
+
+#make a barplot for gender vs CVD state
+gend <- ggplot(cardio_plot,aes(x=factor(cardio),fill=factor(gender))) +
+  geom_bar(position = position_fill(reverse = TRUE)) +
+  scale_fill_manual(values = c("#00BFC4", "#F8766D")) +
+  ylab("Gender") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  theme(axis.title.x = element_blank())
+
+# test for significant differences in gender between CVD states, using chi-squared test
+test_gender <- chisq.test(table(cardio_plot$gender, cardio_plot$cardio))
+chi_squared_results <- tibble(variable = "Gender", p = test_gender$p.value)
+
+#make a barplot for cholesterol vs CVD state
+chole <- ggplot(cardio_plot,aes(x=factor(cardio),fill=factor(cholesterol))) +
+  geom_bar(position = position_fill(reverse = TRUE)) +
+  scale_fill_manual(values = c("#00BFC4", "lightgoldenrod2", "#F8766D")) +
+  ylab("Cholesterol") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  theme(axis.title.x = element_blank())
+
+# test for significant differences in cholesterol between CVD states, using chi-squared test
+test_chole <- chisq.test(table(cardio_plot$cholesterol, cardio_plot$cardio))
+chi_squared_results <-  bind_rows(chi_squared_results,
+                     	tibble(variable = "Cholesterol", p = test_chole$p.value))
+ 
+#make a barplot for blood sugar vs CVD state
+glucose <- ggplot(cardio_plot,aes(x=factor(cardio),fill=factor(gluc))) +
+  geom_bar(position = position_fill(reverse = TRUE)) +
+  scale_fill_manual(values = c("#00BFC4", "lightgoldenrod2", "#F8766D")) +
+  ylab("Blood Sugar") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  theme(axis.title.x = element_blank())
+
+# test for significant differences in blood sugar between CVD states, using chi-squared test
+test_glucose <- chisq.test(table(cardio_plot$gluc, cardio_plot$cardio))
+chi_squared_results <-  bind_rows(chi_squared_results,
+                              	tibble(variable = "Blood Sugar", p = test_glucose$p.value))
+
+#make a barplot for smoking vs CVD state
+smoking <- ggplot(cardio_plot,aes(x=factor(cardio),fill=factor(smoke))) +
+  geom_bar(position = position_fill(reverse = TRUE)) +
+  scale_fill_manual(values = c("#00BFC4", "#F8766D")) +
+  ylab("Smoking") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  theme(axis.title.x = element_blank())
+
+# test for significant differences in smoking between CVD states, using chi-squared test
+test_smoking <- chisq.test(table(cardio_plot$smoke, cardio_plot$cardio))
+chi_squared_results <-  bind_rows(chi_squared_results,
+                              	tibble(variable = "Smoking", p = test_smoking$p.value))
+
+#make a barplot for alcohol vs CVD state
+alcohol <- ggplot(cardio_plot,aes(x=factor(cardio),fill=factor(alco))) +
+  geom_bar(position = position_fill(reverse = TRUE)) +
+  scale_fill_manual(values = c("#00BFC4", "#F8766D")) +
+  ylab("Alcohol") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  theme(axis.title.x = element_blank())
+
+# test for significant differences in alcoholg between CVD states, using chi-squared test
+test_alcohol <- chisq.test(table(cardio_plot$alco, cardio_plot$cardio))
+chi_squared_results <-  bind_rows(chi_squared_results,
+                              	tibble(variable = "Alcohol", p = test_alcohol$p.value))
+
+#make a barplot for physical activity vs CVD state
+active <- ggplot(cardio_plot,aes(x=factor(cardio),fill=factor(active))) +
+  geom_bar(position="fill") +
+  scale_fill_manual(values = c("#F8766D", "#00BFC4")) +
+  ylab("Physical Activity") +
+  scale_y_continuous(labels=scales::percent_format()) +
+  theme(axis.title.x = element_blank())
+
+# test for significant differences in physical activity between CVD states, using chi-squared test
+test_active <- chisq.test(table(cardio_plot$active, cardio_plot$cardio))
+chi_squared_results <-  bind_rows(chi_squared_results,
+                              	tibble(variable = "Physical Activity", p = test_active$p.value))
+
+#create plot
+grid.arrange(gend, chole, glucose, smoking, alcohol, active, nrow = 3)
+
+```
+
+We can see that among people with CVD, there are slightly more males, there are more people with high and very high cholesterol, and high and very high blood sugar. There are also more inactive people among those with CVD. Surprisingly, there doesn't appear to be much difference between CVD cases and non-CVD, when it comes to drinking alcohol and smoking.
+
+```{r chisq, echo = FALSE}
+#print chi-squared test results
+chi_squared_results %>% knitr::kable()
+```
+
+When we run a chi_squared test to see if there is a relationship between our variables and CVD state, we can see that age and alcohol are non-significant (p > 0.01), while other variables are significantly related to CVD. 
+
+Before we move on, let's briefly look at smoking. 
+
+```{r smoching, echo = FALSE, out.width = '80%'}
+#check smoking plot again
+smoking
+
+```
+
+Although we know that smoking is a risk factor for heart disease, in this dataset, we have more smokers among people without heart disease. This may be due to confounding. To prevent this variable from biasing our prediction, which would make our model perform poorly on real world data, we will remove this variable from the dataset before we proceed building models.
+
+```{r removesmoke, include=FALSE}
+#remove smoking from dataset
+cardio <- cardio %>% select(-smoke)
+
+```
+
+## RESULTS
+
+First, we will partition the dataset into a train (80%) and test set (20%). The size of our dataset allows us to do this.
+
+```{r partition, include = FALSE}
+#partition dataset into train and test set 80:20
+set.seed(2, sample.kind = "Rounding")
+test_index <- createDataPartition(cardio$id, times = 1, p = 0.2, list = FALSE)
+train_set <- cardio %>% slice(-test_index)
+test_set <- cardio %>% slice(test_index)
+
+#separate predictor and variables
+y<- train_set$cardio
+x<- select(train_set, -cardio, -id)
+y_test<- test_set$cardio
+x_test <- select(test_set, -cardio, -id)
+```
+
+Next, we will build a simple generalized linear model (GLM) for this dataset. GLMs allow for response variables that have error distribution models other than a normal distribution. This is useful to us because we can include our categorical variables into the prediction.
+
+```{r glm, echo = FALSE, warning = FALSE, message = FALSE}
+#train a glm
+train_glm <- train(x,as.factor(y), method = "glm")
+glm_accuracy <- confusionMatrix(predict(train_glm,x_test, type = "raw"), as.factor(y_test))$overall["Accuracy"]
+
+#save and print results
+cvd_results <- tibble(method = "GLM", Accuracy = glm_accuracy)
+cvd_results %>% knitr::kable()
+```
+
+Let's try a different model to see if we can improve on the GLM. We will build a simple k-nearest neighbors model (k-NN) using our dataset.
+
+```{r knn, echo = FALSE, warning = FALSE, message = FALSE}
+#train a knn
+fit<- knn3(x,as.factor(y))
+y_hat_knn <- predict(fit, x_test, type = "class")
+knn_accuracy <- mean(y_hat_knn == y_test)
+
+#save and print results
+cvd_results <- bind_rows(cvd_results,
+                      	tibble(method="kNN",  
+                             	Accuracy = knn_accuracy))
+cvd_results %>% knitr::kable()
+
+```
+
+Our k-NN model performs worse than our GLM model. It's known that the accuracy of the k-NN algorithm can be degraded when there are irrelevant features. Let's rerun the algorithm, but this time removing the gender and alcohol variables, which were not significantly related to the CVD outcome, and the height variable which was the least significant of the numerical variables.
+
+```{r knn2, echo = FALSE, warning = FALSE, message = FALSE}
+#train a knn without alcohol, height
+x2 <- x%>% select(-gender, -alco, -height)
+x2_test <- x_test %>% select(-gender, -alco, -height)
+fit<- knn3(x2,as.factor(y))
+y_hat_knn <- predict(fit, x2_test, type = "class")
+knn_2_accuracy <- mean(y_hat_knn == y_test)
+
+#save and print results
+cvd_results <- bind_rows(cvd_results,
+                     	tibble(method="kNN_2.0",  
+                            	Accuracy = knn_2_accuracy))
+cvd_results %>% knitr::kable()
+
+```
+
+The accuracy does improve, but is still not comparable to the GLM. Let's try and generate a random forest model. Random forest lends itself well to datasets with mixed numerical and categorical variables, such as ours.
+
+```{r rf, echo = FALSE, warning = FALSE, message = FALSE}
+#build a random forest model
+train_rf<-randomForest(as.factor(y)~., data = x)
+rf_accuracy<- confusionMatrix(predict(train_rf,x_test), as.factor(y_test))$overall["Accuracy"]
+
+#save and print results
+cvd_results <- bind_rows(cvd_results,
+                     	tibble(method="RF",  
+                            	Accuracy = rf_accuracy))
+cvd_results %>% knitr::kable()
+
+```
+
+Random forest slightly outperforms GLM and it is our best model.
+
+## CONCLUSION
+We have explored the cardiovascular disease (CVD) dataset and its variables and have built three different models to try and predict CVD using this dataset: GLM, k-NN and random forest. Random forest was the best performing model, with GLM as the close second. In the future, better accuracy can likely be achieved by (1) tuning the parameters of these models, which the author has attempted but couldn't finalize successfully due to the code timing out in R, likely because of the size of the dataset; (2) by building ensemble models.
+
+## Reference
+
+Hajar R. (2016) Framingham Contribution to Cardiovascular Disease. Heart Views. Apr-Jun; 17(2):78-81. doi: 10.4103/1995-705X.185130
+
+Lopez OE, Ballard BD, Jan A. Cardiovascular Disease. (2022) In: StatPearls [Internet]. Treasure Island (FL): StatPearls Publishing; 2022 Jan-. Available from: https://www.ncbi.nlm.nih.gov/books/NBK535419/
+
+Rana JS, Khan SS, Lloyd-Jones DM, et al. (2021) Changes in Mortality in Top 10 Causes of Death from 2011 to 2018. J Gen Intern Med. Aug; 36(8):2517-2518. doi: 10.1007/s11606-020-06070-z
+
+Wilson PW, D'Agostino RB, Levy D, et al. (1998) Prediction of coronary heart disease using risk factor categories. Circulation. May 12;97(18):1837-47. doi: 10.1161/01.cir.97.18.1837
